@@ -23,23 +23,66 @@ export function EmployeeFilters() {
   const [searchInput, setSearchInput] = useState(urlSearch);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Always-current snapshot of `searchParams`, refreshed via effect after
-  // every render in which it changed (never mutated during render itself —
-  // that trips this project's react-hooks/refs lint rule). The debounce
-  // timer's callback fires up to 300ms after the render that scheduled it,
-  // by which point other filters (Department/Country/Level, which push
-  // immediately/undebounced) may have already changed the URL. Reading
-  // through this ref instead of closing over `searchParams` directly means
-  // `setParam` always rebuilds from the *live* query string, so a filter
-  // picked while a search debounce is pending is never dropped when the
-  // debounced push lands. The effect always runs (commit + passive-effect
-  // flush) before the browser can deliver a subsequent user event such as
-  // a Select click, so there's no window where the ref is stale for a
-  // synchronous caller either.
-  const searchParamsRef = useRef(searchParams);
+  // The single synchronous source of truth `setParam` reads from *and*
+  // writes to. Every `setParam` call — whether from a Select's immediate
+  // `onValueChange` or from the debounced search callback firing up to
+  // 300ms later — rebuilds the next URL on top of whatever this ref
+  // currently holds, then immediately (synchronously, before `router.push`
+  // is even called) overwrites it with the result. Because JS is
+  // single-threaded, two `setParam` invocations never overlap: whichever
+  // one's triggering event/timer fires *second* always observes the
+  // *first* one's completed write to this ref — regardless of how long
+  // the first call's own `router.push` navigation subsequently takes to
+  // resolve over the network. That's what makes the merge race-free for
+  // ANY relative timing between the debounce and a concurrent Select
+  // navigation, not just empirically fast ones.
+  //
+  // Round 2 used a ref synced from `searchParams` via `useEffect`, and the
+  // re-review found that ref goes stale for as long as a concurrent
+  // navigation's async RSC round-trip is in flight, because `searchParams`
+  // (React state) only advances once that round-trip resolves and the
+  // component re-renders. Reading `window.location.search` directly at
+  // call time does NOT fix this in this codebase: verified directly
+  // against the running dev server (patched `history.pushState` to log
+  // call times, then clicked a Select and polled `location.search`) that
+  // Next 16.3.3's client router calls `history.pushState` only once the
+  // navigated-to route's data has resolved — from inside the same commit
+  // that updates `useSearchParams()` — not synchronously when
+  // `router.push()` is invoked. `location.search` sat unchanged for ~56ms
+  // after the click returned before `pushState` finally fired. So
+  // `window.location.search` lags an in-flight navigation by exactly the
+  // same, unbounded (network-latency-dependent) amount `searchParams`
+  // does; it is not a structural fix here. This ref sidesteps the problem
+  // entirely by never reading the URL/router for the merge at all — it's
+  // self-contained, synchronously-updated JS state, so it can't be stale
+  // relative to a concurrent navigation no matter how long that
+  // navigation's fetch takes.
+  const paramsRef = useRef(new URLSearchParams(searchParams.toString()));
+
+  // Best-effort reconciliation for *external* URL changes this component
+  // didn't itself initiate — browser back/forward being the main case —
+  // so a subsequent filter click builds on top of the right base instead
+  // of resurrecting a filter the user just navigated away from. This is
+  // deliberately NOT tied to `searchParams` changing (which would also
+  // fire when one of our *own* debounced/immediate pushes finally lands,
+  // and could then race a newer synchronous `setParam` write exactly the
+  // way round 2's effect did). `popstate` fires only for actual history
+  // traversal — never for our own `router.push()` calls, since
+  // `pushState`/`replaceState` never trigger `popstate` — and by the time
+  // it fires, `window.location.search` already synchronously reflects the
+  // traversed-to URL (no async gap here: this is the one case where
+  // reading `window.location` is safe, because we're not racing a
+  // concurrent in-flight navigation, we're reading the outcome of one the
+  // browser already completed). This reconciliation is intentionally out
+  // of scope for the race-freedom argument above, which needs no help
+  // from the URL or any effect/event listener at all.
   useEffect(() => {
-    searchParamsRef.current = searchParams;
-  }, [searchParams]);
+    function handlePopState() {
+      paramsRef.current = new URLSearchParams(window.location.search);
+    }
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
 
   // The last search value *this component* has pushed (or is about to
   // push) to the URL, tracked as state (not a ref) so it can be read
@@ -73,13 +116,18 @@ export function EmployeeFilters() {
   }, []);
 
   function setParam(key: string, value: string | null) {
-    const params = new URLSearchParams(searchParamsRef.current.toString());
+    const params = new URLSearchParams(paramsRef.current.toString());
     if (value === "ALL" || !value) {
       params.delete(key);
     } else {
       params.set(key, value);
     }
     params.set("page", "1");
+    // Write-before-push: this is what makes the merge race-free (see the
+    // comment on `paramsRef` above) — the next `setParam` call to run,
+    // whenever that is, sees this write regardless of how long the
+    // `router.push` below takes to resolve.
+    paramsRef.current = params;
     router.push(`${pathname}?${params.toString()}`);
   }
 

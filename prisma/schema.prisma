@@ -1,0 +1,44 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Employee {
+  id            String         @id @default(cuid())
+  name          String
+  email         String         @unique
+  department    String
+  jobLevel      String
+  country       String
+  hireDate      DateTime
+  status        String         @default("ACTIVE")
+  salaryRecords SalaryRecord[]
+
+  @@index([department])
+  @@index([country])
+  @@index([jobLevel])
+}
+
+model SalaryRecord {
+  id            String    @id @default(cuid())
+  employeeId    String
+  employee      Employee  @relation(fields: [employeeId], references: [id])
+  component     String
+  amount        Decimal   @db.Decimal(12, 2)
+  currency      String
+  effectiveFrom DateTime
+  effectiveTo   DateTime?
+  createdAt     DateTime  @default(now())
+
+  @@index([employeeId, effectiveTo])
+}
+
+model User {
+  id           String @id @default(cuid())
+  email        String @unique
+  passwordHash String
+}

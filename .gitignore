@@ -30,9 +30,10 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (never commit secrets; .env.example is explicitly tracked)
+# env files (never commit secrets; .env.example and .env.test.example are explicitly tracked)
 .env*
 !.env.example
+!.env.test.example
 
 # vercel
 .vercel

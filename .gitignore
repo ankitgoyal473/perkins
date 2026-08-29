@@ -44,3 +44,6 @@ next-env.d.ts
 
 # scratch workspace for this multi-task build (do not commit)
 .superpowers/
+
+# Claude Code session-local state (locks, etc.) — not project content
+.claude/

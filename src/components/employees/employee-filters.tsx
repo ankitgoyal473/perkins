@@ -23,15 +23,47 @@ export function EmployeeFilters() {
   const [searchInput, setSearchInput] = useState(urlSearch);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Always-current snapshot of `searchParams`, refreshed via effect after
+  // every render in which it changed (never mutated during render itself —
+  // that trips this project's react-hooks/refs lint rule). The debounce
+  // timer's callback fires up to 300ms after the render that scheduled it,
+  // by which point other filters (Department/Country/Level, which push
+  // immediately/undebounced) may have already changed the URL. Reading
+  // through this ref instead of closing over `searchParams` directly means
+  // `setParam` always rebuilds from the *live* query string, so a filter
+  // picked while a search debounce is pending is never dropped when the
+  // debounced push lands. The effect always runs (commit + passive-effect
+  // flush) before the browser can deliver a subsequent user event such as
+  // a Select click, so there's no window where the ref is stale for a
+  // synchronous caller either.
+  const searchParamsRef = useRef(searchParams);
+  useEffect(() => {
+    searchParamsRef.current = searchParams;
+  }, [searchParams]);
+
+  // The last search value *this component* has pushed (or is about to
+  // push) to the URL, tracked as state (not a ref) so it can be read
+  // safely during the render-phase sync check below. Lets that check tell
+  // "the URL's search param changed because our own debounced push just
+  // landed" (in which case `searchInput` may already be ahead — further
+  // keystrokes typed during the async gap between the push and its
+  // re-render — and must not be clobbered) apart from "changed for some
+  // external reason, e.g. browser back/forward" (in which case
+  // `searchInput` should adopt it).
+  const [lastPushedSearch, setLastPushedSearch] = useState(urlSearch);
+
   // Keep the input in sync when the URL's search param changes from outside
-  // this component's own debounced update (e.g. browser back/forward).
-  // Adjusted during render (React's recommended pattern for deriving state
-  // from a changed prop) rather than in an effect, to avoid an extra
-  // render pass and the associated lint warning against setState-in-effect.
+  // this component's own debounced update. Adjusted during render (React's
+  // recommended pattern for deriving state from a changed prop) rather than
+  // in an effect, to avoid an extra render pass and the associated lint
+  // warning against setState-in-effect.
   const [prevUrlSearch, setPrevUrlSearch] = useState(urlSearch);
   if (urlSearch !== prevUrlSearch) {
     setPrevUrlSearch(urlSearch);
-    setSearchInput(urlSearch);
+    if (urlSearch !== lastPushedSearch) {
+      setSearchInput(urlSearch);
+      setLastPushedSearch(urlSearch);
+    }
   }
 
   useEffect(() => {
@@ -41,7 +73,7 @@ export function EmployeeFilters() {
   }, []);
 
   function setParam(key: string, value: string | null) {
-    const params = new URLSearchParams(searchParams.toString());
+    const params = new URLSearchParams(searchParamsRef.current.toString());
     if (value === "ALL" || !value) {
       params.delete(key);
     } else {
@@ -55,6 +87,7 @@ export function EmployeeFilters() {
     setSearchInput(value);
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
+      setLastPushedSearch(value);
       setParam("search", value);
     }, SEARCH_DEBOUNCE_MS);
   }

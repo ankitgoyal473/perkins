@@ -10,7 +10,8 @@ export default async function EmployeesPage({
   searchParams: Promise<{ page?: string; department?: string; country?: string; jobLevel?: string; search?: string }>;
 }) {
   const params = await searchParams;
-  const page = Number(params.page ?? "1");
+  const parsedPage = Number(params.page);
+  const page = Number.isFinite(parsedPage) ? Math.max(1, Math.floor(parsedPage)) : 1;
 
   const { employees, total } = await listEmployees({
     page,

@@ -19,5 +19,9 @@ export default defineConfig({
     environment: "node",
     setupFiles: ["./tests/setup.ts"],
     globals: true,
+    // Test files share one real Postgres instance and isolate via a
+    // per-test truncate (tests/setup.ts) — that only holds if files run
+    // one at a time, not concurrently across workers.
+    fileParallelism: false,
   },
 });

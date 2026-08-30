@@ -47,3 +47,6 @@ next-env.d.ts
 
 # Claude Code session-local state (locks, etc.) — not project content
 .claude/
+
+.vercel
+.env*
